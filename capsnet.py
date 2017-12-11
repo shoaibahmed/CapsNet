@@ -203,12 +203,13 @@ if options.trainModel:
 			numSteps = int(options.numTrainingInstances / options.batchSize)
 			for step in range(numSteps):
 				# Compute test loss first since the error reported after optimization will be lower than the train error
-				lossTest = sess.run(loss, feed_dict={inputPlaceholder: mnist.test.images, labelsPlaceholder: mnist.test.labels})
+				# lossTest = sess.run(loss, feed_dict={inputPlaceholder: mnist.test.images, labelsPlaceholder: mnist.test.labels})
 
 				batch = mnist.train.next_batch(options.batchSize)
-				loss, _ = sess.run([loss, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
+				currentLoss, _ = sess.run([loss, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
 				
-				print ("Step: %d | Train Loss: %f | Test Loss: %f" % (step, loss, lossTest))
+				# print ("Step: %d | Train Loss: %f | Test Loss: %f" % (step, loss, lossTest))
+				print ("Step: %d | Train Loss: %f" % (step, currentLoss))
 
 if options.testModel:
 	raise NotImplementedError

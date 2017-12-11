@@ -1,3 +1,3 @@
 #!/bin/bash
 
-python capsnet.py -t -s --batchSize 10 --trainingEpochs 10
+python capsnet.py -t -s --batchSize 1000 --trainingEpochs 10
