@@ -4,7 +4,7 @@ Playground for experimentation with CapsNet.
 
 To initiate the training, use the command:
 ```
-python trainer.py -t -s --batchSize 10 --trainingEpochs 10
+python trainer.py -t -s --batchSize 1000 --trainingEpochs 10
 ```
 
 <h2>References:</h2>

@@ -2,8 +2,8 @@ import tensorflow as tf
 from optparse import OptionParser
 import numpy as np
 
-import matplotlib.pyplot as plt
-import matplotlib as mpl
+import os
+import shutil
 
 # Command line options
 parser = OptionParser()
@@ -23,6 +23,9 @@ parser.add_option("--trainingEpochs", action="store", type="int", dest="training
 parser.add_option("--learningRate", action="store", type="float", dest="learningRate", default=1e-3, help="Learning Rate")
 parser.add_option("--numClasses", action="store", type="int", dest="numClasses", default=10, help="Number of classes")
 
+parser.add_option("--validationStep", action="store", type="int", dest="validationStep", default=10, help="Number of iterations before performing validation")
+parser.add_option("--saveStep", action="store", type="int", dest="saveStep", default=1000, help="Number of iterations before saving the model")
+
 # Network params
 parser.add_option("--numPrimaryCapsules", action="store", type="int", dest="numPrimaryCapsules", default=32, help="Number of primary capsules")
 parser.add_option("--numLevelTwoCapsules", action="store", type="int", dest="numLevelTwoCapsules", default=10, help="Number of level two capsules")
@@ -30,16 +33,24 @@ parser.add_option("--primaryCapsulesFeatureSize", action="store", type="int", de
 parser.add_option("--levelTwoCapsulesFeatureSize", action="store", type="int", dest="levelTwoCapsulesFeatureSize", default=16, help="Dimensionality of the features from the level two capsule")
 parser.add_option("--epsilon", action="store", type="float", dest="epsilon", default=1e-7, help="Epsilon to avoid numerical issues")
 
-parser.add_option("--numTrainingInstances", action="store", type="int", dest="numTrainingInstances", default=60000, help="Training instances")
+parser.add_option("--numTrainingInstances", action="store", type="int", dest="numTrainingInstances", default=55000, help="Training instances")
+parser.add_option("--numValidationInstances", action="store", type="int", dest="numValidationInstances", default=5000, help="Validation instances")
 parser.add_option("--numTestInstances", action="store", type="int", dest="numTestInstances", default=10000, help="Test instances")
 
 # Directories
-parser.add_option("--checkpointPath", action="store", type="string", dest="checkpointPath", default="./checkpoints", help="Path for storing checkpoints")
-parser.add_option("--logPath", action="store", type="string", dest="logPath", default="./logs", help="Path for storing logs")
+parser.add_option("--checkpointDir", action="store", type="string", dest="checkpointDir", default="./checkpoints", help="Path for storing checkpoints")
+parser.add_option("--logDir", action="store", type="string", dest="logDir", default="./logs", help="Path for storing logs")
+parser.add_option("--modelName", action="store", type="string", dest="modelName", default="capsnet", help="Name of the model to be stored")
 
 # Parse command line options
 (options, args) = parser.parse_args()
 print (options)
+
+from enum import Enum
+class Dataset(Enum):
+	TRAIN = 1
+	VALIDATION = 2
+	TEST = 3
 
 # Import dataset
 from tensorflow.examples.tutorials.mnist import input_data
@@ -182,6 +193,49 @@ with tf.name_scope('Accuracy'):
 	correct = tf.equal(labelsPlaceholder, predictedY, name="correct")
 	accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
 
+# Function for evaluation on any specific dataset
+def evaluateDataset(sess, dataset=Dataset.VALIDATION):
+	if dataset == Dataset.TRAIN:
+		datasetName = "Train"
+		totalInstances = options.numTrainingInstances
+		numIterations = int(options.numTrainingInstances / options.batchSize)
+	elif dataset == Dataset.VALIDATION:
+		datasetName = "Validation"
+		totalInstances = options.numValidationInstances
+		numIterations = int(options.numValidationInstances / options.batchSize)
+	elif dataset == Dataset.TEST:
+		datasetName = "Test"
+		totalInstances = options.numTestInstances
+		numIterations = int(options.numTestInstances / options.batchSize)
+	else:
+		print ("Error: Dataset not found in available options!")
+		exit (-1)
+
+	# Evaluate the model over the given instances
+	correctlyClassifiedInstances = 0
+	averageLoss = 0.0
+	for i in range(numIterations):
+		if dataset == Dataset.TRAIN:
+			batch = mnist.train.next_batch(options.batchSize)
+		elif dataset == Dataset.VALIDATION:
+			batch = mnist.validation.next_batch(options.batchSize)
+		elif dataset == Dataset.TEST:
+			batch = mnist.test.next_batch(options.batchSize)
+
+		currentLoss, currentAccuracy, currentPredictions = sess.run([loss, accuracy, predictedY], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
+		correctlyClassifiedInstances += np.sum(currentPredictions == batch[1])
+		averageLoss += currentLoss
+
+		print ("Dataset: %s | Loss: %f | Accuracy: %f" % (datasetName, currentLoss, currentAccuracy))
+
+	# Compute the dataset statistics
+	averageLoss = averageLoss / numIterations
+	currentAccuracy = float(correctlyClassifiedInstances) / totalInstances
+	print ("Dataset: %s | Total images: %d | Correctly classified: %d | Accuracy: %f | Average Loss: %f" % (datasetName, totalInstances, correctlyClassifiedInstances, currentAccuracy, averageLoss))
+	return currentAccuracy, averageLoss
+
+
+saver = tf.train.Saver()
 initOp = tf.global_variables_initializer()
 
 # GPU config
@@ -192,24 +246,49 @@ if options.trainModel:
 	with tf.Session(config=config) as sess:
 		if options.startTrainingFromScratch:
 			sess.run(initOp) # Reinitialize the weights randomly
-		else:
-			if not tf.train.checkpoint_exists(options.checkpointPath):
-				print ("Error: No checkpoints found at: %s" % options.checkpointPath)
-				exit(-1)
-			saver.restore(sess, options.checkpointPath)
 
+			# Remove the previous checkpoints and logs
+			if os.path.exists(options.checkpointDir):
+				shutil.rmtree(options.checkpointDir)
+			if os.path.exists(options.logDir):
+				shutil.rmtree(options.logDir)
+			os.mkdir(options.checkpointDir)
+			os.mkdir(options.logDir)
+		else:
+			if not tf.train.checkpoint_exists(options.checkpointDir):
+				print ("Error: No checkpoints found at: %s" % options.checkpointDir)
+				exit(-1)
+			saver.restore(sess, options.checkpointDir)
+
+		globalStep = 1
+		bestValidationAccuracy = 0.0
 		for epoch in range(options.trainingEpochs):
 			print ("Starting training for epoch # %d" % (epoch))
 			numSteps = int(options.numTrainingInstances / options.batchSize)
 			for step in range(numSteps):
-				# Compute test loss first since the error reported after optimization will be lower than the train error
-				# lossTest = sess.run(loss, feed_dict={inputPlaceholder: mnist.test.images, labelsPlaceholder: mnist.test.labels})
-
 				batch = mnist.train.next_batch(options.batchSize)
-				currentLoss, _ = sess.run([loss, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
-				
-				# print ("Step: %d | Train Loss: %f | Test Loss: %f" % (step, loss, lossTest))
-				print ("Step: %d | Train Loss: %f" % (step, currentLoss))
+				currentLoss, currentAccuracy, _ = sess.run([loss, accuracy, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
+				print ("Global step: %d | Step: %d | Train Loss: %f | Train accuracy: %f" % (globalStep, step, currentLoss, currentAccuracy))
+
+				if globalStep % options.validationStep == 0:
+					validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
+					
+					# Save the best model if found
+					if validationAccuracy > bestValidationAccuracy:
+						print ("New best validation accuracy achieved | Previous best: %f | Current best: %f" % (bestValidationAccuracy, validationAccuracy))
+						bestValidationAccuracy = validationAccuracy
+						outputModelName = options.modelName + "-best"
+						saver.save(sess, os.path.join(options.checkpointDir, outputModelName))
+						print ("Best model saved: %s" % (os.path.join(options.checkpointDir, outputModelName)))
+
+				if globalStep % options.saveStep == 0:
+					# Save final model weights to disk
+					saver.save(sess, os.path.join(options.checkpointDir, options.modelName))
+					print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
+
+	# Save final model weights to disk
+	saver.save(sess, os.path.join(options.checkpointDir, options.modelName))
+	print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
 
 if options.testModel:
 	raise NotImplementedError
