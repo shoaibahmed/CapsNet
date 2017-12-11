@@ -268,8 +268,9 @@ if options.trainModel:
 			for step in range(numSteps):
 				batch = mnist.train.next_batch(options.batchSize)
 				currentLoss, currentAccuracy, _ = sess.run([loss, accuracy, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
-				print ("Global step: %d | Step: %d | Train Loss: %f | Train accuracy: %f" % (globalStep, step, currentLoss, currentAccuracy))
+				print ("Global step: %d | Step: %d | Train Loss: %f | Train accuracy: %f" % (globalStep, step + 1, currentLoss, currentAccuracy))
 
+				globalStep += 1
 				if globalStep % options.validationStep == 0:
 					validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
 					
@@ -291,4 +292,21 @@ if options.trainModel:
 	print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
 
 if options.testModel:
-	raise NotImplementedError
+	with tf.Session(config=config) as sess:
+		if not tf.train.checkpoint_exists(options.checkpointDir):
+			print ("Error: No checkpoints found at: %s" % options.checkpointDir)
+			exit(-1)
+		modelPath = os.path.join(options.checkpointDir, options.modelName + "-best")
+		saver.restore(sess, modelPath)
+		print ("Model successfully loaded: %s" % (modelPath))
+
+		# Perform testing on the complete test set
+		trainAccuracy, trainLoss = evaluateDataset(sess, Dataset.TRAIN)
+		validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
+		testAccuracy, testLoss = evaluateDataset(sess, Dataset.TEST)
+
+		print ("Dataset: Train | Loss: %f | Accuracy: %f" % (trainLoss, trainAccuracy))
+		print ("Dataset: Validation | Loss: %f | Accuracy: %f" % (validationLoss, validationAccuracy))
+		print ("Dataset: Test | Loss: %f | Accuracy: %f" % (testLoss, testAccuracy))
+
+	print ("Model tested successfully!")
