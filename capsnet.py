@@ -46,6 +46,17 @@ parser.add_option("--modelName", action="store", type="string", dest="modelName"
 (options, args) = parser.parse_args()
 print (options)
 
+# Make sure the batch size is perfectly divisible by the number of instances for training, validation and test
+if (options.numTrainingInstances % options.batchSize != 0):
+	print ("Error: Batch size not perfectly divisible by the number of training examples (%d)!" % options.numTrainingInstances)
+	exit (-1)
+if (options.numValidationInstances % options.batchSize != 0):
+	print ("Error: Batch size not perfectly divisible by the number of validation examples (%d)!" % options.numValidationInstances)
+	exit (-1)
+if (options.numTestInstances % options.batchSize != 0):
+	print ("Error: Batch size not perfectly divisible by the number of test examples (%d)!" % options.numTestInstances)
+	exit (-1)
+
 from enum import Enum
 class Dataset(Enum):
 	TRAIN = 1
@@ -58,6 +69,7 @@ mnist = input_data.read_data_sets('MNIST_data', one_hot=False)
 
 # Create placeholder
 inputPlaceholder = tf.placeholder(tf.float32, shape=[None, int(options.imageHeight * options.imageWidth * options.imageChannels)], name="inputPlaceholder")
+reshapedInput = tf.reshape(inputPlaceholder, [-1, options.imageHeight, options.imageWidth, options.imageChannels]) # Output shape: 28 x 28
 # labelsPlaceholder = tf.placeholder(tf.int64, shape=[None, options.numClasses], name="labelsPlaceholder")
 labelsPlaceholder = tf.placeholder(tf.int64, shape=[None], name="labelsPlaceholder")
 containLabelsPlaceholder = tf.placeholder_with_default(False, shape=(), name="containLabelsPlaceholder")
@@ -70,8 +82,6 @@ def squashFunction(inputVector, axis=-1, name=None):
 		return squashedOut
 
 def initCapsNet(inputPlaceholder):
-	inputPlaceholder = tf.reshape(inputPlaceholder, [-1, options.imageHeight, options.imageWidth, options.imageChannels]) # Output shape: 28 x 28
-
 	net = tf.layers.conv2d(inputs=inputPlaceholder, filters=256, kernel_size=(9, 9), strides=(1, 1), padding='VALID', activation=tf.nn.relu, name='conv1') # Output shape: 20 x 20 x 256
 	net = tf.layers.conv2d(inputs=net, filters=256, kernel_size=(9, 9), strides=(2, 2), padding='VALID', activation=tf.nn.relu, name='conv2') # Output shape: 6 x 6 x 256 (32 8-D Capsules)
 
@@ -143,7 +153,7 @@ def computeL2Norm(s, axis=-1, epsilon=1e-7, keep_dims=False, name=None):
 
 with tf.name_scope('Model'):
 	# Create the graph
-	caps2Output = initCapsNet(inputPlaceholder)
+	caps2Output = initCapsNet(reshapedInput)
 	yProbability = computeL2Norm(caps2Output, axis=-2, name="yProbability")
 	yProbabilityArgmax = tf.argmax(yProbability, axis=2, name="yProbabilityArgmax")
 	predictedY = tf.squeeze(yProbabilityArgmax, axis=[1,2], name="predictedY")
@@ -161,7 +171,8 @@ with tf.name_scope('Decoder'):
 
 	decoderInput = tf.reshape(caps2OutputMasked, [-1, options.numLevelTwoCapsules * options.levelTwoCapsulesFeatureSize], name="decoderInput")
 	decoderOutput = addDecoder(decoderInput)
-	# X_flat = tf.reshape(X, [-1, n_output], name="X_flat")
+	reshapedDecoderOutput = tf.reshape(decoderOutput, [-1, options.imageHeight, options.imageWidth, options.imageChannels]) # Output shape: 28 x 28
+
 	squaredDifference = tf.square(inputPlaceholder - decoderOutput, name="squaredDifference")
 	reconstructionLoss = tf.reduce_sum(squaredDifference, name="reconstructionLoss")
 
@@ -185,13 +196,44 @@ with tf.name_scope('Loss'):
 	alpha = 0.0005
 	loss = tf.add(marginLoss, alpha * reconstructionLoss, name="loss")
 
-with tf.name_scope('Optimizer'):
-	# Define Optimizer (use the default params defined in TF as used in paper)
-	optimizationStep = tf.train.AdamOptimizer().minimize(loss)
-
 with tf.name_scope('Accuracy'):
 	correct = tf.equal(labelsPlaceholder, predictedY, name="correct")
 	accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name="accuracy")
+
+with tf.name_scope('Optimizer'):
+	# Define Optimizer (use the default params defined in TF as used in paper)
+	# optimizationStep = tf.train.AdamOptimizer().minimize(loss)
+	optimizer = tf.train.AdamOptimizer()
+
+	# Op to calculate every variable gradient
+	gradients = tf.gradients(loss, tf.trainable_variables())
+	gradients = list(zip(gradients, tf.trainable_variables()))
+
+	# Op to update all variables according to their gradient
+	optimizationStep = optimizer.apply_gradients(grads_and_vars=gradients)
+
+if options.tensorboardVisualization:
+	# Create a summary to monitor cost tensor
+	tf.summary.scalar("loss", loss)
+	tf.summary.scalar("margin loss", marginLoss)
+	tf.summary.scalar("reconstruction loss", reconstructionLoss)
+	tf.summary.scalar("accuracy", accuracy)
+
+	# Add the image summary of reconstructions
+	tf.summary.image("Original Image", reshapedInput)
+	tf.summary.image("Reconstructed Image", reshapedDecoderOutput)
+
+	# Create summaries to visualize weights
+	for var in tf.trainable_variables():
+		tf.summary.histogram(var.name, var)
+
+	# Summarize all gradients
+	for grad, var in gradients:
+		if grad is not None:
+			tf.summary.histogram(var.name + '/gradient', grad)
+
+	# Merge all summaries into a single op
+	mergedSummaryOp = tf.summary.merge_all()
 
 # Function for evaluation on any specific dataset
 def evaluateDataset(sess, dataset=Dataset.VALIDATION):
@@ -234,7 +276,7 @@ def evaluateDataset(sess, dataset=Dataset.VALIDATION):
 	print ("Dataset: %s | Total images: %d | Correctly classified: %d | Accuracy: %f | Average Loss: %f" % (datasetName, totalInstances, correctlyClassifiedInstances, currentAccuracy, averageLoss))
 	return currentAccuracy, averageLoss
 
-
+# Create the saver object
 saver = tf.train.Saver()
 initOp = tf.global_variables_initializer()
 
@@ -260,6 +302,10 @@ if options.trainModel:
 				exit(-1)
 			saver.restore(sess, options.checkpointDir)
 
+		if options.tensorboardVisualization:
+			# Write the graph to file
+			summaryWriter = tf.summary.FileWriter(options.logDir, graph=tf.get_default_graph())
+
 		globalStep = 1
 		bestValidationAccuracy = 0.0
 		for epoch in range(options.trainingEpochs):
@@ -267,7 +313,11 @@ if options.trainModel:
 			numSteps = int(options.numTrainingInstances / options.batchSize)
 			for step in range(numSteps):
 				batch = mnist.train.next_batch(options.batchSize)
-				currentLoss, currentAccuracy, _ = sess.run([loss, accuracy, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
+				if options.tensorboardVisualization:
+					currentLoss, currentAccuracy, _, summary = sess.run([loss, accuracy, optimizationStep, mergedSummaryOp], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
+					summaryWriter.add_summary(summary, globalStep)
+				else:
+					currentLoss, currentAccuracy, _ = sess.run([loss, accuracy, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
 				print ("Global step: %d | Step: %d | Train Loss: %f | Train accuracy: %f" % (globalStep, step + 1, currentLoss, currentAccuracy))
 
 				globalStep += 1
