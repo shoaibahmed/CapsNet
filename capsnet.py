@@ -1,6 +1,7 @@
 import tensorflow as tf
 from optparse import OptionParser
 import numpy as np
+import cv2
 
 import os
 import shutil
@@ -285,61 +286,100 @@ config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 
 if options.trainModel:
-	with tf.Session(config=config) as sess:
-		if options.startTrainingFromScratch:
-			sess.run(initOp) # Reinitialize the weights randomly
+	try:
+		with tf.Session(config=config) as sess:
+			if options.startTrainingFromScratch:
+				sess.run(initOp) # Reinitialize the weights randomly
 
-			# Remove the previous checkpoints and logs
-			if os.path.exists(options.checkpointDir):
-				shutil.rmtree(options.checkpointDir)
-			if os.path.exists(options.logDir):
-				shutil.rmtree(options.logDir)
-			os.mkdir(options.checkpointDir)
-			os.mkdir(options.logDir)
-		else:
-			if not tf.train.checkpoint_exists(options.checkpointDir):
-				print ("Error: No checkpoints found at: %s" % options.checkpointDir)
-				exit(-1)
-			saver.restore(sess, options.checkpointDir)
+				# Remove the previous checkpoints and logs
+				if os.path.exists(options.checkpointDir):
+					shutil.rmtree(options.checkpointDir)
+				if os.path.exists(options.logDir):
+					shutil.rmtree(options.logDir)
+				os.mkdir(options.checkpointDir)
+				os.mkdir(options.logDir)
 
-		if options.tensorboardVisualization:
-			# Write the graph to file
-			summaryWriter = tf.summary.FileWriter(options.logDir, graph=tf.get_default_graph())
+				logFile = open(os.path.join(options.logDir, "performance-log.txt"), 'w')
+			else:
+				if not tf.train.checkpoint_exists(options.checkpointDir):
+					print ("Error: No checkpoints found at: %s" % options.checkpointDir)
+					exit(-1)
+				saver.restore(sess, options.checkpointDir)
+				logFile = open(os.path.join(options.logDir, "performance-log.txt"), 'a')
 
-		globalStep = 1
-		bestValidationAccuracy = 0.0
-		for epoch in range(options.trainingEpochs):
-			print ("Starting training for epoch # %d" % (epoch))
-			numSteps = int(options.numTrainingInstances / options.batchSize)
-			for step in range(numSteps):
-				batch = mnist.train.next_batch(options.batchSize)
-				if options.tensorboardVisualization:
-					currentLoss, currentAccuracy, _, summary = sess.run([loss, accuracy, optimizationStep, mergedSummaryOp], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
-					summaryWriter.add_summary(summary, globalStep)
-				else:
-					currentLoss, currentAccuracy, _ = sess.run([loss, accuracy, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
-				print ("Global step: %d | Step: %d | Train Loss: %f | Train accuracy: %f" % (globalStep, step + 1, currentLoss, currentAccuracy))
+			if options.tensorboardVisualization:
+				# Write the graph to file
+				summaryWriter = tf.summary.FileWriter(options.logDir, graph=tf.get_default_graph())
 
-				globalStep += 1
-				if globalStep % options.validationStep == 0:
-					validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
-					
-					# Save the best model if found
-					if validationAccuracy > bestValidationAccuracy:
-						print ("New best validation accuracy achieved | Previous best: %f | Current best: %f" % (bestValidationAccuracy, validationAccuracy))
-						bestValidationAccuracy = validationAccuracy
-						outputModelName = options.modelName + "-best"
-						saver.save(sess, os.path.join(options.checkpointDir, outputModelName))
-						print ("Best model saved: %s" % (os.path.join(options.checkpointDir, outputModelName)))
+			globalStep = 1
+			bestValidationAccuracy = 0.0
+			
+			totalTrainCorrectInstances = 0
+			totalTrainInstances = 0
+			averageTrainLoss = 0.0
+			for epoch in range(options.trainingEpochs):
+				print ("Starting training for epoch # %d" % (epoch + 1))
+				numSteps = int(options.numTrainingInstances / options.batchSize)
+				for step in range(numSteps):
+					batch = mnist.train.next_batch(options.batchSize)
+					if options.tensorboardVisualization:
+						currentLoss, currentAccuracy, currentPredictions, _, summary = sess.run([loss, accuracy, predictedY, optimizationStep, mergedSummaryOp], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
+						summaryWriter.add_summary(summary, globalStep)
+					else:
+						currentLoss, currentAccuracy, currentPredictions, _ = sess.run([loss, accuracy, predictedY, optimizationStep], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1], containLabelsPlaceholder: True})
+					print ("Global step: %d | Epoch: %d | Step: %d | Train Loss: %f | Train accuracy: %f" % (globalStep, epoch + 1, step + 1, currentLoss, currentAccuracy))
 
-				if globalStep % options.saveStep == 0:
-					# Save final model weights to disk
-					saver.save(sess, os.path.join(options.checkpointDir, options.modelName))
-					print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
+					# Update the statistics
+					totalTrainCorrectInstances += np.sum(currentPredictions == batch[1])
+					totalTrainInstances += options.batchSize
+					averageTrainLoss += currentLoss
 
-	# Save final model weights to disk
-	saver.save(sess, os.path.join(options.checkpointDir, options.modelName))
-	print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
+					if globalStep % options.validationStep == 0:
+						validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
+						
+						# Write the statistics to file
+						averageTrainLoss = averageTrainLoss / options.validationStep
+						averageTrainAccuracy = float(totalTrainCorrectInstances) / totalTrainInstances
+						logFile.write("%d %f %f %f %f %f %f\n" % (globalStep, averageTrainLoss, averageTrainAccuracy, currentLoss, currentAccuracy, validationLoss, validationAccuracy))
+
+						# Reset the values now
+						totalTrainCorrectInstances = 0
+						totalTrainInstances = 0
+						averageTrainLoss = 0.0
+						
+						# Save the best model if found
+						if validationAccuracy > bestValidationAccuracy:
+							print ("New best validation accuracy achieved | Previous best: %f | Current best: %f" % (bestValidationAccuracy, validationAccuracy))
+							bestValidationAccuracy = validationAccuracy
+							outputModelName = options.modelName + "-best"
+							saver.save(sess, os.path.join(options.checkpointDir, outputModelName))
+							print ("Best model saved: %s" % (os.path.join(options.checkpointDir, outputModelName)))
+
+					if globalStep % options.saveStep == 0:
+						# Save final model weights to disk
+						saver.save(sess, os.path.join(options.checkpointDir, options.modelName))
+						print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
+
+					globalStep += 1
+
+			logFile.close()
+
+			# Save final model weights to disk
+			saver.save(sess, os.path.join(options.checkpointDir, options.modelName))
+			print ("Model saved: %s" % (os.path.join(options.checkpointDir, options.modelName)))
+
+	except KeyboardInterrupt:
+		print ("Keyboard interrupt occured. Closing log files!")
+		logFile.close()
+		exit(-1)
+
+def tweak_pose_parameters(output_vectors, min=-0.5, max=0.5, n_steps=11):
+	steps = np.linspace(min, max, n_steps) # -0.25, -0.15, ..., +0.25
+	pose_parameters = np.arange(caps2_n_dims) # 0, 1, ..., 15
+	tweaks = np.zeros([caps2_n_dims, n_steps, 1, 1, 1, caps2_n_dims, 1])
+	tweaks[pose_parameters, :, 0, 0, 0, pose_parameters, 0] = steps
+	output_vectors_expanded = output_vectors[np.newaxis, np.newaxis]
+	return tweaks + output_vectors_expanded
 
 if options.testModel:
 	with tf.Session(config=config) as sess:
@@ -358,5 +398,62 @@ if options.testModel:
 		print ("Dataset: Train | Loss: %f | Accuracy: %f" % (trainLoss, trainAccuracy))
 		print ("Dataset: Validation | Loss: %f | Accuracy: %f" % (validationLoss, validationAccuracy))
 		print ("Dataset: Test | Loss: %f | Accuracy: %f" % (testLoss, testAccuracy))
+
+		# Check the reconstruction to trace the parameter's influence
+		numberOfSamplesForTesting = 5
+		sampleImages = mnist.test.images[:numberOfSamplesForTesting].reshape([-1, 28, 28, 1])
+
+		# Get the corresponding image reconstruction output
+		caps2OutputValue, decoderOutputValue, predictedYValue = sess.run([caps2Output, decoderOutput, predictedY], 
+												feed_dict={X: sampleImages, y: np.array([], dtype=np.int64)})
+
+		sampleImages = sampleImages.reshape(-1, 28, 28)
+		reconstructions = decoderOutputValue.reshape([-1, 28, 28])
+
+		plt.figure(figsize=(n_samples * 2, 3))
+		for index in range(n_samples):
+			plt.subplot(1, n_samples, index + 1)
+			plt.imshow(sample_images[index], cmap="binary")
+			plt.title("Label:" + str(mnist.test.labels[index]))
+			plt.axis("off")
+
+		# plt.show()
+		outputLocation = os.path.join(options.logDir, "original-images.png")
+		plt.savefig(outputLocation, dpi=300)
+
+		plt.figure(figsize=(n_samples * 2, 3))
+		for index in range(n_samples):
+			plt.subplot(1, n_samples, index + 1)
+			plt.title("Predicted:" + str(y_pred_value[index]))
+			plt.imshow(reconstructions[index], cmap="binary")
+			plt.axis("off")
+			
+		# plt.show()
+		outputLocation = os.path.join(options.logDir, "reconstructed-images.png")
+		plt.savefig(outputLocation, dpi=300)
+
+		# Tweak the outputs now
+		n_steps = 11
+
+		tweaked_vectors = tweak_pose_parameters(caps2_output_value, n_steps=n_steps)
+		tweaked_vectors_reshaped = tweaked_vectors.reshape(
+			[-1, 1, caps2_n_caps, caps2_n_dims, 1])
+
+		tweak_labels = np.tile(mnist.test.labels[:n_samples], caps2_n_dims * n_steps)
+		decoder_output_value = sess.run(decoder_output, feed_dict={caps2_output: tweaked_vectors_reshaped, mask_with_labels: True, y: tweak_labels})
+
+		tweak_reconstructions = decoder_output_value.reshape([caps2_n_dims, n_steps, n_samples, 28, 28])
+
+		for dim in range(3):
+			print("Tweaking output dimension #{}".format(dim))
+			plt.figure(figsize=(n_steps / 1.2, n_samples / 1.5))
+			for row in range(n_samples):
+				for col in range(n_steps):
+					plt.subplot(n_samples, n_steps, row * n_steps + col + 1)
+					plt.imshow(tweak_reconstructions[dim, col, row], cmap="binary")
+					plt.axis("off")
+			# plt.show()
+			outputLocation = os.path.join(options.logDir, "Dim-" + str(dim) + ".png")
+			plt.savefig(outputLocation, dpi=300)
 
 	print ("Model tested successfully!")
