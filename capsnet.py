@@ -5,6 +5,7 @@ import cv2
 
 import os
 import shutil
+import dataloader
 
 # Command line options
 parser = OptionParser()
@@ -14,6 +15,7 @@ parser.add_option("-t", "--trainModel", action="store_true", dest="trainModel", 
 parser.add_option("-c", "--testModel", action="store_true", dest="testModel", default=False, help="Test model")
 parser.add_option("-s", "--startTrainingFromScratch", action="store_true", dest="startTrainingFromScratch", default=False, help="Start training from scratch")
 parser.add_option("-v", "--tensorboardVisualization", action="store_true", dest="tensorboardVisualization", default=False, help="Enable tensorboard visualization")
+parser.add_option("-d", "--dataset", action="store", type="string", dest="dataset", default="MNIST", help="Dataset to be used for training")
 
 parser.add_option("--imageWidth", action="store", type="int", dest="imageWidth", default=28, help="Image width for feeding into the network")
 parser.add_option("--imageHeight", action="store", type="int", dest="imageHeight", default=28, help="Image height for feeding into the network")
@@ -47,6 +49,24 @@ parser.add_option("--modelName", action="store", type="string", dest="modelName"
 (options, args) = parser.parse_args()
 print (options)
 
+# Assert if the dataset is within the predefined possible options
+datasetDict = {"MNIST": 1, "CIFAR-10": 2}
+if options.dataset not in datasetDict:
+	print ("Error: Dataset not within the predefined possible options (%s)" % str(datasetDict.keys()))
+	exit (-1)
+else:
+	# Add the dataset name at the end of the model
+	options.logDir = options.logDir + "-" + options.dataset
+	options.checkpointDir = options.checkpointDir + "-" + options.dataset
+
+	# Import dataset
+	dataloader = dataloader.DataLoader(options.dataset, one_hot=False)
+	options.numTrainingInstances = dataloader.train.num_examples
+	options.numValidationInstances = dataloader.validation.num_examples
+	options.numTestInstances = dataloader.test.num_examples
+	print ("Training Instances: %d | Validation Instances: %d | Test Instances: %d" % 
+		(options.numTrainingInstances, options.numValidationInstances, options.numTestInstances))
+
 # Make sure the batch size is perfectly divisible by the number of instances for training, validation and test
 if (options.numTrainingInstances % options.batchSize != 0):
 	print ("Error: Batch size not perfectly divisible by the number of training examples (%d)!" % options.numTrainingInstances)
@@ -63,10 +83,6 @@ class Dataset(Enum):
 	TRAIN = 1
 	VALIDATION = 2
 	TEST = 3
-
-# Import dataset
-from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets('MNIST_data', one_hot=False)
 
 # Create placeholder
 inputPlaceholder = tf.placeholder(tf.float32, shape=[None, int(options.imageHeight * options.imageWidth * options.imageChannels)], name="inputPlaceholder")
@@ -259,11 +275,11 @@ def evaluateDataset(sess, dataset=Dataset.VALIDATION):
 	averageLoss = 0.0
 	for i in range(numIterations):
 		if dataset == Dataset.TRAIN:
-			batch = mnist.train.next_batch(options.batchSize)
+			batch = dataloader.train.next_batch(options.batchSize)
 		elif dataset == Dataset.VALIDATION:
-			batch = mnist.validation.next_batch(options.batchSize)
+			batch = dataloader.validation.next_batch(options.batchSize)
 		elif dataset == Dataset.TEST:
-			batch = mnist.test.next_batch(options.batchSize)
+			batch = dataloader.test.next_batch(options.batchSize)
 
 		currentLoss, currentAccuracy, currentPredictions = sess.run([loss, accuracy, predictedY], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
 		correctlyClassifiedInstances += np.sum(currentPredictions == batch[1])
@@ -321,7 +337,7 @@ if options.trainModel:
 				print ("Starting training for epoch # %d" % (epoch + 1))
 				numSteps = int(options.numTrainingInstances / options.batchSize)
 				for step in range(numSteps):
-					batch = mnist.train.next_batch(options.batchSize)
+					batch = dataloader.train.next_batch(options.batchSize)
 					if options.tensorboardVisualization:
 						currentLoss, currentAccuracy, currentPredictions, _, summary = sess.run([loss, accuracy, predictedY, optimizationStep, mergedSummaryOp], feed_dict={inputPlaceholder: batch[0], labelsPlaceholder: batch[1]})
 						summaryWriter.add_summary(summary, globalStep)
@@ -401,7 +417,7 @@ if options.testModel:
 
 		# Check the reconstruction to trace the parameter's influence
 		numberOfSamplesForTesting = 5
-		sampleImages = mnist.test.images[:numberOfSamplesForTesting].reshape([-1, 28, 28, 1])
+		sampleImages = dataloader.test.images[:numberOfSamplesForTesting].reshape([-1, 28, 28, 1])
 
 		# Get the corresponding image reconstruction output
 		caps2OutputValue, decoderOutputValue, predictedYValue = sess.run([caps2Output, decoderOutput, predictedY], 
@@ -414,7 +430,7 @@ if options.testModel:
 		for index in range(n_samples):
 			plt.subplot(1, n_samples, index + 1)
 			plt.imshow(sample_images[index], cmap="binary")
-			plt.title("Label:" + str(mnist.test.labels[index]))
+			plt.title("Label:" + str(dataloader.test.labels[index]))
 			plt.axis("off")
 
 		# plt.show()
@@ -439,7 +455,7 @@ if options.testModel:
 		tweaked_vectors_reshaped = tweaked_vectors.reshape(
 			[-1, 1, caps2_n_caps, caps2_n_dims, 1])
 
-		tweak_labels = np.tile(mnist.test.labels[:n_samples], caps2_n_dims * n_steps)
+		tweak_labels = np.tile(dataloader.test.labels[:n_samples], caps2_n_dims * n_steps)
 		decoder_output_value = sess.run(decoder_output, feed_dict={caps2_output: tweaked_vectors_reshaped, mask_with_labels: True, y: tweak_labels})
 
 		tweak_reconstructions = decoder_output_value.reshape([caps2_n_dims, n_steps, n_samples, 28, 28])
