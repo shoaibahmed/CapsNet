@@ -121,6 +121,7 @@ class DataLoader():
 			if not os.path.exists(cifarDatasetDirectory):
 				downloadAndExtractDataset(url)
 			data = loadDataset(cifarDatasetDirectory, ["data_batch_" + str(i) for i in range(1, 6)] + ["test_batch"])
+			data["data"] = data["data"].reshape(60000, 3, 32, 32).transpose(0, 2, 3, 1).astype("float") # Get the images in the right order
 			for key in data:
 				print ("Key: %s | Data shape: %s" % (key, str(data[key].shape)))
 			numTrainingExamples = 45000
@@ -155,5 +156,7 @@ if __name__ == "__main__":
 	print ("Labels:", batch[1].shape)
 
 	from PIL import Image
-	j = Image.fromarray(batch[0][0, :].reshape([32, 32, 3]))
+	import cv2
+	j = Image.fromarray(batch[0][0, :].reshape([32, 32, 3]).astype(np.uint8))
 	j.save("out.png")
+	cv2.imwrite("out-cv.png", batch[0][0, :].reshape([32, 32, 3]))
