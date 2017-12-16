@@ -104,8 +104,20 @@ class Set():
 			return [self.images[start:end], self.labels[start:end]]
 
 	@property
+	def images(self):
+		return self.images
+
+	@property
+	def labels(self):
+		return self.labels
+
+	@property
 	def num_examples(self):
 		return self.num_examples
+
+	@property
+	def epochs_completed(self):
+		return self.epochs_completed
 
 class DataLoader():
 	def __init__(self, datasetName, one_hot=False):
@@ -146,9 +158,19 @@ class DataLoader():
 		print ("Test:", self.test.images.shape, self.test.labels.shape)
 
 if __name__ == "__main__":
-	print ("Executing main")
-	# data = DataLoader(datasetName = "MNIST")
+	print ("Dataset: MNIST")
+	data = DataLoader(datasetName = "MNIST")
+
+	print ("Training examples:", data.train.num_examples)
+	print ("Validation examples:", data.validation.num_examples)
+	print ("Test examples:", data.test.num_examples)
+
+	print ("Dataset: CIFAR-10")
 	data = DataLoader(datasetName = "CIFAR-10")
+
+	print ("Training examples:", data.train.num_examples)
+	print ("Validation examples:", data.validation.num_examples)
+	print ("Test examples:", data.test.num_examples)
 
 	# Test by obtaining a data sample
 	batch = data.train.next_batch(batch_size=2)

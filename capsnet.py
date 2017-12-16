@@ -304,6 +304,7 @@ initOp = tf.global_variables_initializer()
 # GPU config
 config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
+logFile = None
 
 if options.trainModel:
 	try:
@@ -390,7 +391,8 @@ if options.trainModel:
 
 	except KeyboardInterrupt:
 		print ("Keyboard interrupt occured. Closing log files!")
-		logFile.close()
+		if logFile is not None:
+			logFile.close()
 		exit(-1)
 
 def tweak_pose_parameters(output_vectors, min=-0.5, max=0.5, n_steps=11):
