@@ -7,6 +7,10 @@ import os
 import shutil
 import dataloader
 
+# For visualization
+import matplotlib
+import matplotlib.pyplot as plt
+
 # Command line options
 parser = OptionParser()
 
@@ -391,8 +395,8 @@ if options.trainModel:
 
 def tweak_pose_parameters(output_vectors, min=-0.5, max=0.5, n_steps=11):
 	steps = np.linspace(min, max, n_steps) # -0.25, -0.15, ..., +0.25
-	pose_parameters = np.arange(caps2_n_dims) # 0, 1, ..., 15
-	tweaks = np.zeros([caps2_n_dims, n_steps, 1, 1, 1, caps2_n_dims, 1])
+	pose_parameters = np.arange(options.levelTwoCapsulesFeatureSize) # 0, 1, ..., 15
+	tweaks = np.zeros([options.levelTwoCapsulesFeatureSize, n_steps, 1, 1, 1, options.levelTwoCapsulesFeatureSize, 1])
 	tweaks[pose_parameters, :, 0, 0, 0, pose_parameters, 0] = steps
 	output_vectors_expanded = output_vectors[np.newaxis, np.newaxis]
 	return tweaks + output_vectors_expanded
@@ -407,29 +411,30 @@ if options.testModel:
 		print ("Model successfully loaded: %s" % (modelPath))
 
 		# Perform testing on the complete test set
-		trainAccuracy, trainLoss = evaluateDataset(sess, Dataset.TRAIN)
-		validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
-		testAccuracy, testLoss = evaluateDataset(sess, Dataset.TEST)
+		# trainAccuracy, trainLoss = evaluateDataset(sess, Dataset.TRAIN)
+		# validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
+		# testAccuracy, testLoss = evaluateDataset(sess, Dataset.TEST)
 
-		print ("Dataset: Train | Loss: %f | Accuracy: %f" % (trainLoss, trainAccuracy))
-		print ("Dataset: Validation | Loss: %f | Accuracy: %f" % (validationLoss, validationAccuracy))
-		print ("Dataset: Test | Loss: %f | Accuracy: %f" % (testLoss, testAccuracy))
+		# print ("Dataset: Train | Loss: %f | Accuracy: %f" % (trainLoss, trainAccuracy))
+		# print ("Dataset: Validation | Loss: %f | Accuracy: %f" % (validationLoss, validationAccuracy))
+		# print ("Dataset: Test | Loss: %f | Accuracy: %f" % (testLoss, testAccuracy))
 
 		# Check the reconstruction to trace the parameter's influence
 		numberOfSamplesForTesting = 5
-		sampleImages = dataloader.test.images[:numberOfSamplesForTesting].reshape([-1, 28, 28, 1])
+		# sampleImages = dataloader.test.images[:numberOfSamplesForTesting].reshape([-1, 28, 28, 1])
+		sampleImages = dataloader.test.images[:numberOfSamplesForTesting]
 
 		# Get the corresponding image reconstruction output
 		caps2OutputValue, decoderOutputValue, predictedYValue = sess.run([caps2Output, decoderOutput, predictedY], 
-												feed_dict={X: sampleImages, y: np.array([], dtype=np.int64)})
+												feed_dict={inputPlaceholder: sampleImages, labelsPlaceholder: np.array([], dtype=np.int64), containLabelsPlaceholder: False})
 
 		sampleImages = sampleImages.reshape(-1, 28, 28)
 		reconstructions = decoderOutputValue.reshape([-1, 28, 28])
 
-		plt.figure(figsize=(n_samples * 2, 3))
-		for index in range(n_samples):
-			plt.subplot(1, n_samples, index + 1)
-			plt.imshow(sample_images[index], cmap="binary")
+		plt.figure(figsize=(numberOfSamplesForTesting * 2, 3))
+		for index in range(numberOfSamplesForTesting):
+			plt.subplot(1, numberOfSamplesForTesting, index + 1)
+			plt.imshow(sampleImages[index], cmap="binary")
 			plt.title("Label:" + str(dataloader.test.labels[index]))
 			plt.axis("off")
 
@@ -437,10 +442,10 @@ if options.testModel:
 		outputLocation = os.path.join(options.logDir, "original-images.png")
 		plt.savefig(outputLocation, dpi=300)
 
-		plt.figure(figsize=(n_samples * 2, 3))
-		for index in range(n_samples):
-			plt.subplot(1, n_samples, index + 1)
-			plt.title("Predicted:" + str(y_pred_value[index]))
+		plt.figure(figsize=(numberOfSamplesForTesting * 2, 3))
+		for index in range(numberOfSamplesForTesting):
+			plt.subplot(1, numberOfSamplesForTesting, index + 1)
+			plt.title("Predicted:" + str(predictedYValue[index]))
 			plt.imshow(reconstructions[index], cmap="binary")
 			plt.axis("off")
 			
@@ -451,21 +456,21 @@ if options.testModel:
 		# Tweak the outputs now
 		n_steps = 11
 
-		tweaked_vectors = tweak_pose_parameters(caps2_output_value, n_steps=n_steps)
+		tweaked_vectors = tweak_pose_parameters(caps2OutputValue, n_steps=n_steps)
 		tweaked_vectors_reshaped = tweaked_vectors.reshape(
-			[-1, 1, caps2_n_caps, caps2_n_dims, 1])
+			[-1, 1, options.numLevelTwoCapsules, options.levelTwoCapsulesFeatureSize, 1])
 
-		tweak_labels = np.tile(dataloader.test.labels[:n_samples], caps2_n_dims * n_steps)
-		decoder_output_value = sess.run(decoder_output, feed_dict={caps2_output: tweaked_vectors_reshaped, mask_with_labels: True, y: tweak_labels})
+		tweak_labels = np.tile(dataloader.test.labels[:numberOfSamplesForTesting], options.levelTwoCapsulesFeatureSize * n_steps)
+		decoder_output_value = sess.run(decoderOutput, feed_dict={caps2Output: tweaked_vectors_reshaped, labelsPlaceholder: tweak_labels, containLabelsPlaceholder: True})
 
-		tweak_reconstructions = decoder_output_value.reshape([caps2_n_dims, n_steps, n_samples, 28, 28])
+		tweak_reconstructions = decoder_output_value.reshape([options.levelTwoCapsulesFeatureSize, n_steps, numberOfSamplesForTesting, 28, 28])
 
-		for dim in range(3):
-			print("Tweaking output dimension #{}".format(dim))
-			plt.figure(figsize=(n_steps / 1.2, n_samples / 1.5))
-			for row in range(n_samples):
+		for dim in range(options.levelTwoCapsulesFeatureSize):
+			print("Tweaking output dimension # {}".format(dim))
+			plt.figure(figsize=(n_steps / 1.2, numberOfSamplesForTesting / 1.5))
+			for row in range(numberOfSamplesForTesting):
 				for col in range(n_steps):
-					plt.subplot(n_samples, n_steps, row * n_steps + col + 1)
+					plt.subplot(numberOfSamplesForTesting, n_steps, row * n_steps + col + 1)
 					plt.imshow(tweak_reconstructions[dim, col, row], cmap="binary")
 					plt.axis("off")
 			# plt.show()
