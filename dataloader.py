@@ -127,13 +127,18 @@ class DataLoader():
 			self.train = mnist.train
 			self.test = mnist.test
 			self.validation = mnist.validation
+
+			self.image_height = 28
+			self.image_width = 28
+			self.image_channels = 1
+
 		elif self.datasetName == "CIFAR-10":
 			cifarDatasetDirectory = 'cifar-10-batches-py'
 			url = 'http://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'
 			if not os.path.exists(cifarDatasetDirectory):
 				downloadAndExtractDataset(url)
 			data = loadDataset(cifarDatasetDirectory, ["data_batch_" + str(i) for i in range(1, 6)] + ["test_batch"])
-			data["data"] = data["data"].reshape(60000, 3, 32, 32).transpose(0, 2, 3, 1).astype("float") # Get the images in the right order
+			data["data"] = data["data"].reshape(60000, 3, 32, 32).transpose(0, 2, 3, 1).astype("float").reshape(60000, -1) # Get the images in the right order
 			for key in data:
 				print ("Key: %s | Data shape: %s" % (key, str(data[key].shape)))
 			numTrainingExamples = 45000
@@ -144,6 +149,10 @@ class DataLoader():
 				data["labels"][numTrainingExamples:numTrainingExamples+numValidationExamples])
 			self.test = Set(data["data"][numTrainingExamples+numValidationExamples:numTrainingExamples+numValidationExamples+numTestExamples], 
 				data["labels"][numTrainingExamples+numValidationExamples:numTrainingExamples+numValidationExamples+numTestExamples])
+
+			self.image_height = 32
+			self.image_width = 32
+			self.image_channels = 3
 
 		else:
 			print ("Error: Dataset not found within the specified list")

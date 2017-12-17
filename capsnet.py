@@ -40,6 +40,16 @@ parser.add_option("--primaryCapsulesFeatureSize", action="store", type="int", de
 parser.add_option("--levelTwoCapsulesFeatureSize", action="store", type="int", dest="levelTwoCapsulesFeatureSize", default=16, help="Dimensionality of the features from the level two capsule")
 parser.add_option("--epsilon", action="store", type="float", dest="epsilon", default=1e-7, help="Epsilon to avoid numerical issues")
 
+# Regularization
+parser.add_option("--numDecoderFirstHiddenLayerUnits", action="store", type="int", dest="numDecoderFirstHiddenLayerUnits", default=512, help="Number of neurons in the first layer of the decoder")
+parser.add_option("--numDecoderSecondHiddenLayerUnits", action="store", type="int", dest="numDecoderSecondHiddenLayerUnits", default=1024, help="Number of neurons in the second layer of the decoder")
+
+# Loss params
+parser.add_option("--mPlus", action="store", type="float", dest="mPlus", default=0.9, help="m+ to be used in the computation of the margin loss")
+parser.add_option("--mMinus", action="store", type="float", dest="mMinus", default=0.1, help="m- to be used in the computation of the margin loss")
+parser.add_option("--lambda", action="store", type="float", dest="lambda_", default=0.5, help="Lambda to be used in the computation of the margin loss")
+parser.add_option("--alpha", action="store", type="float", dest="alpha", default=0.0005, help="Alpha to be used to weigh the regularization")
+
 parser.add_option("--numTrainingInstances", action="store", type="int", dest="numTrainingInstances", default=55000, help="Training instances")
 parser.add_option("--numValidationInstances", action="store", type="int", dest="numValidationInstances", default=5000, help="Validation instances")
 parser.add_option("--numTestInstances", action="store", type="int", dest="numTestInstances", default=10000, help="Test instances")
@@ -51,7 +61,6 @@ parser.add_option("--modelName", action="store", type="string", dest="modelName"
 
 # Parse command line options
 (options, args) = parser.parse_args()
-print (options)
 
 # Assert if the dataset is within the predefined possible options
 datasetDict = {"MNIST": 1, "CIFAR-10": 2}
@@ -70,6 +79,18 @@ else:
 	options.numTestInstances = dataloader.test.num_examples
 	print ("Training Instances: %d | Validation Instances: %d | Test Instances: %d" % 
 		(options.numTrainingInstances, options.numValidationInstances, options.numTestInstances))
+
+	options.imageWidth = dataloader.image_width
+	options.imageHeight = dataloader.image_height
+	options.imageChannels = dataloader.image_channels
+
+	if options.dataset == "CIFAR-10":
+		options.numPrimaryCapsules = 64
+		options.numDecoderFirstHiddenLayerUnits = 2048
+		options.numDecoderSecondHiddenLayerUnits = 4096
+
+# Print the finalized options
+print (options)
 
 # Make sure the batch size is perfectly divisible by the number of instances for training, validation and test
 if (options.numTrainingInstances % options.batchSize != 0):
@@ -104,7 +125,8 @@ def squashFunction(inputVector, axis=-1, name=None):
 
 def initCapsNet(inputPlaceholder):
 	net = tf.layers.conv2d(inputs=inputPlaceholder, filters=256, kernel_size=(9, 9), strides=(1, 1), padding='VALID', activation=tf.nn.relu, name='conv1') # Output shape: 20 x 20 x 256
-	net = tf.layers.conv2d(inputs=net, filters=256, kernel_size=(9, 9), strides=(2, 2), padding='VALID', activation=tf.nn.relu, name='conv2') # Output shape: 6 x 6 x 256 (32 8-D Capsules)
+	net = tf.layers.conv2d(inputs=net, filters=options.numPrimaryCapsules * options.primaryCapsulesFeatureSize, kernel_size=(9, 9), 
+							strides=(2, 2), padding='VALID', activation=tf.nn.relu, name='conv2') # Output shape: 6 x 6 x 256 (32 8-D Capsules)
 
 	# Reshape to convert 6 x 6 x 256 to 6 x 6 x 32 (8-D Capsules)
 	lastLayerShape = list(net.get_shape()) # 6 x 6
@@ -158,13 +180,9 @@ def initCapsNet(inputPlaceholder):
 	return caps2OutputRound2
 
 def addDecoder(decoderInput):
-	n_hidden1 = 512
-	n_hidden2 = 1024
-	n_output = 28 * 28
-
-	hidden1 = tf.layers.dense(decoderInput, n_hidden1, activation=tf.nn.relu, name="hidden1")
-	hidden2 = tf.layers.dense(hidden1, n_hidden2, activation=tf.nn.relu, name="hidden2")
-	decoderOutput = tf.layers.dense(hidden2, n_output, activation=tf.nn.sigmoid, name="decoderOutput")
+	hidden1 = tf.layers.dense(decoderInput, options.numDecoderFirstHiddenLayerUnits, activation=tf.nn.relu, name="hidden1")
+	hidden2 = tf.layers.dense(hidden1, options.numDecoderSecondHiddenLayerUnits, activation=tf.nn.relu, name="hidden2")
+	decoderOutput = tf.layers.dense(hidden2, options.imageHeight * options.imageWidth * options.imageChannels, activation=tf.nn.sigmoid, name="decoderOutput")
 	return decoderOutput
 
 def computeL2Norm(s, axis=-1, epsilon=1e-7, keep_dims=False, name=None):
@@ -198,24 +216,19 @@ with tf.name_scope('Decoder'):
 	reconstructionLoss = tf.reduce_sum(squaredDifference, name="reconstructionLoss")
 
 with tf.name_scope('Loss'):
-	mPlus = 0.9
-	mMinus = 0.1
-	lambda_ = 0.5
-
 	caps2OutputNorm = computeL2Norm(caps2Output, axis=-2, keep_dims=True, name="caps2OutputNorm")
 
-	presentErrorRaw = tf.square(tf.maximum(0., mPlus - caps2OutputNorm), name="presentErrorRaw")
+	presentErrorRaw = tf.square(tf.maximum(0., options.mPlus - caps2OutputNorm), name="presentErrorRaw")
 	presentError = tf.reshape(presentErrorRaw, shape=(-1, 10), name="presentError")
 
-	absentErrorRaw = tf.square(tf.maximum(0., caps2OutputNorm - mMinus), name="absentErrorRaw")
+	absentErrorRaw = tf.square(tf.maximum(0., caps2OutputNorm - options.mMinus), name="absentErrorRaw")
 	absentError = tf.reshape(absentErrorRaw, shape=(-1, 10), name="absentError")
 
 	T = tf.one_hot(labelsPlaceholder, depth=options.numLevelTwoCapsules, name="T")
-	L = tf.add(T * presentError, lambda_ * (1.0 - T) * absentError, name="L")
+	L = tf.add(T * presentError, options.lambda_ * (1.0 - T) * absentError, name="L")
 	marginLoss = tf.reduce_mean(tf.reduce_sum(L, axis=1), name="marginLoss")
 
-	alpha = 0.0005
-	loss = tf.add(marginLoss, alpha * reconstructionLoss, name="loss")
+	loss = tf.add(marginLoss, options.alpha * reconstructionLoss, name="loss")
 
 with tf.name_scope('Accuracy'):
 	correct = tf.equal(labelsPlaceholder, predictedY, name="correct")
