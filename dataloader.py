@@ -64,7 +64,7 @@ class Set():
 
 		self.num_examples = self.labels.shape[0]
 
-	def next_batch(self, batch_size, shuffle=True):
+	def next_batch(self, batch_size, shuffle=True, augmentation=True):
 		"""Return the next `batch_size` examples from this data set."""
 		start = self.index_in_epoch
 		# Shuffle for the first epoch
@@ -96,12 +96,28 @@ class Set():
 			end = self.index_in_epoch
 			images_new_part = self.images[start:end]
 			labels_new_part = self.labels[start:end]
-			return [np.concatenate((images_rest_part, images_new_part), axis=0) , np.concatenate((labels_rest_part, labels_new_part), axis=0)]
+			batchImages = np.concatenate((images_rest_part, images_new_part), axis=0)
+			batchLabels = np.concatenate((labels_rest_part, labels_new_part), axis=0)
+			
 
 		else:
 			self.index_in_epoch += batch_size
 			end = self.index_in_epoch
-			return [self.images[start:end], self.labels[start:end]]
+			batchImages = self.images[start:end]
+			batchLabels = self.labels[start:end]
+
+		# Apply augmentation
+		if augmentation:
+			# Flip image left right
+			if np.random.rand() > 0.5:
+				batchImages = batchImages[:, :, ::-1, :]
+
+			# Perform per image whitening
+			imageMean = np.mean(batchImages, axis=(1,2,3), keepdims=True)
+			imageVar = np.var(batchImages, axis=(1,2,3), keepdims=True)
+			batchImages = (batchImages - imageMean) / imageVar
+
+		return [batchImages.reshape(batch_size, -1), batchLabels]
 
 	@property
 	def images(self):
@@ -138,7 +154,7 @@ class DataLoader():
 			if not os.path.exists(cifarDatasetDirectory):
 				downloadAndExtractDataset(url)
 			data = loadDataset(cifarDatasetDirectory, ["data_batch_" + str(i) for i in range(1, 6)] + ["test_batch"])
-			data["data"] = data["data"].reshape(60000, 3, 32, 32).transpose(0, 2, 3, 1).astype("float").reshape(60000, -1) # Get the images in the right order
+			data["data"] = data["data"].reshape(60000, 3, 32, 32).transpose(0, 2, 3, 1).astype("float") # Get the images in the right order
 			for key in data:
 				print ("Key: %s | Data shape: %s" % (key, str(data[key].shape)))
 			numTrainingExamples = 45000
@@ -182,12 +198,15 @@ if __name__ == "__main__":
 	print ("Test examples:", data.test.num_examples)
 
 	# Test by obtaining a data sample
-	batch = data.train.next_batch(batch_size=2)
+	batch = data.train.next_batch(batch_size=2, augmentation=True)
 	print ("Images:", batch[0].shape)
 	print ("Labels:", batch[1].shape)
+	firstImage = batch[0][0, :].reshape([32, 32, 3]).astype(np.uint8)
 
 	from PIL import Image
-	import cv2
-	j = Image.fromarray(batch[0][0, :].reshape([32, 32, 3]).astype(np.uint8))
+	j = Image.fromarray(firstImage)
 	j.save("out.png")
-	cv2.imwrite("out-cv.png", batch[0][0, :].reshape([32, 32, 3]))
+
+	# import cv2
+	# img = cv2.cvtColor(firstImage, cv2.COLOR_RGB2BGR)
+	# cv2.imwrite("out-cv.png", img)
