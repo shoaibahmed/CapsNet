@@ -426,13 +426,13 @@ if options.testModel:
 		print ("Model successfully loaded: %s" % (modelPath))
 
 		# Perform testing on the complete test set
-		# trainAccuracy, trainLoss = evaluateDataset(sess, Dataset.TRAIN)
-		# validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
-		# testAccuracy, testLoss = evaluateDataset(sess, Dataset.TEST)
+		trainAccuracy, trainLoss = evaluateDataset(sess, Dataset.TRAIN)
+		validationAccuracy, validationLoss = evaluateDataset(sess, Dataset.VALIDATION)
+		testAccuracy, testLoss = evaluateDataset(sess, Dataset.TEST)
 
-		# print ("Dataset: Train | Loss: %f | Accuracy: %f" % (trainLoss, trainAccuracy))
-		# print ("Dataset: Validation | Loss: %f | Accuracy: %f" % (validationLoss, validationAccuracy))
-		# print ("Dataset: Test | Loss: %f | Accuracy: %f" % (testLoss, testAccuracy))
+		print ("Dataset: Train | Loss: %f | Accuracy: %f" % (trainLoss, trainAccuracy))
+		print ("Dataset: Validation | Loss: %f | Accuracy: %f" % (validationLoss, validationAccuracy))
+		print ("Dataset: Test | Loss: %f | Accuracy: %f" % (testLoss, testAccuracy))
 
 		# Check the reconstruction to trace the parameter's influence
 		numberOfSamplesForTesting = 5
