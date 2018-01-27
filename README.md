@@ -14,6 +14,11 @@ python capsnet.py -c --batchSize 500 -d MNIST
 ```
 where absence of -t flag indicates that only testing of the trained model has to be performed.
 
+To try CapsNet without routing by agreement (only capsules), execute the capsnet_no_rba.py script as follows:
+```
+python capsnet_no_rba.py -t -s -c -v --batchSize 500 --trainingEpochs 20 -d MNIST
+```
+
 <h2>References:</h2>
 <ol>
 <li>https://github.com/ageron/handson-ml/blob/master/extra_capsnets.ipynb</li>
