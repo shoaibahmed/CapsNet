@@ -38,6 +38,7 @@ parser.add_option("--numPrimaryCapsules", action="store", type="int", dest="numP
 parser.add_option("--numLevelTwoCapsules", action="store", type="int", dest="numLevelTwoCapsules", default=10, help="Number of level two capsules")
 parser.add_option("--primaryCapsulesFeatureSize", action="store", type="int", dest="primaryCapsulesFeatureSize", default=8, help="Dimensionality of the features from the primary capsule")
 parser.add_option("--levelTwoCapsulesFeatureSize", action="store", type="int", dest="levelTwoCapsulesFeatureSize", default=16, help="Dimensionality of the features from the level two capsule")
+parser.add_option("--numRoutingIterations", action="store", type="int", dest="numRoutingIterations", default=3, help="Number of routing iterations to perform")
 parser.add_option("--epsilon", action="store", type="float", dest="epsilon", default=1e-7, help="Epsilon to avoid numerical issues")
 
 # Regularization
@@ -165,19 +166,28 @@ def initCapsNet(inputPlaceholder):
 
 	caps2OutputRound1 = squashFunction(weightedSum, axis=-2, name="caps2OutputRound1")
 
-	# Round 2
-	caps2OutputRound1Tiled = tf.tile(caps2OutputRound1, [1, totalPrimaryCapsules, 1, 1, 1], name="caps2_output_round_1_tiled")
+	i = tf.constant(0)
+	while_condition = lambda i, caps2OutputRound1: tf.less(i, options.numRoutingIterations)
 
-	agreement = tf.matmul(caps2Predicted, caps2OutputRound1Tiled, transpose_a=True, name="agreement")
+	def loop_body(i, caps2OutputRound1):
+		# Round 2
+		caps2OutputRound1Tiled = tf.tile(caps2OutputRound1, [1, totalPrimaryCapsules, 1, 1, 1], name="caps2_output_round_1_tiled")
 
-	rawWeightsRound2 = tf.add(rawWeights, agreement, name="rawWeightsRound2")
+		agreement = tf.matmul(caps2Predicted, caps2OutputRound1Tiled, transpose_a=True, name="agreement")
 
-	routingWeightsRound2 = tf.nn.softmax(rawWeightsRound2, dim=2, name="routingWeightsRound2")
-	weightedPredictionsRound2 = tf.multiply(routingWeightsRound2, caps2Predicted, name="weightedPredictionsRound2")
-	weightedSumRound2 = tf.reduce_sum(weightedPredictionsRound2, axis=1, keep_dims=True, name="weightedSumRound2")
-	caps2OutputRound2 = squashFunction(weightedSumRound2, axis=-2, name="caps2OutputRound2")
+		rawWeightsRound2 = tf.add(rawWeights, agreement, name="rawWeightsRound2")
 
-	return caps2OutputRound2
+		routingWeightsRound2 = tf.nn.softmax(rawWeightsRound2, dim=2, name="routingWeightsRound2")
+		weightedPredictionsRound2 = tf.multiply(routingWeightsRound2, caps2Predicted, name="weightedPredictionsRound2")
+		weightedSumRound2 = tf.reduce_sum(weightedPredictionsRound2, axis=1, keep_dims=True, name="weightedSumRound2")
+		caps2OutputRound2 = squashFunction(weightedSumRound2, axis=-2, name="caps2OutputRound2")
+		return [tf.add(i, 1), caps2OutputRound2]
+
+	[loopNode, caps2FinalOutput] = tf.while_loop(while_condition, loop_body, [i, caps2OutputRound1])
+
+	with tf.control_dependencies([caps2FinalOutput]):
+		print ("Caps2 output shape: %s" % str(caps2FinalOutput.get_shape()))
+		return caps2FinalOutput
 
 def addDecoder(decoderInput):
 	hidden1 = tf.layers.dense(decoderInput, options.numDecoderFirstHiddenLayerUnits, activation=tf.nn.relu, name="hidden1")
