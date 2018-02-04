@@ -156,34 +156,48 @@ def initCapsNet(inputPlaceholder):
 	caps2Predicted = tf.matmul(tiledW, caps1OutputTiled, name="caps2Predicted")
 
 	# Routing by agreement
-	rawWeights = tf.zeros([batchSize, totalPrimaryCapsules, options.numLevelTwoCapsules, 1, 1], dtype=np.float32, name="rawWeights")
+	# rawWeights = tf.zeros([batchSize, totalPrimaryCapsules, options.numLevelTwoCapsules, 1, 1], dtype=np.float32, name="rawWeights")
 
 	# Round 1
-	routingWeights = tf.nn.softmax(rawWeights, dim=2, name="routingWeights")
+	# routingWeights = tf.nn.softmax(rawWeights, dim=2, name="routingWeights")
 
-	weightedPredictions = tf.multiply(routingWeights, caps2Predicted, name="weightedPredictions")
-	weightedSum = tf.reduce_sum(weightedPredictions, axis=1, keep_dims=True, name="weightedSum")
+	# weightedPredictions = tf.multiply(routingWeights, caps2Predicted, name="weightedPredictions")
+	# weightedSum = tf.reduce_sum(weightedPredictions, axis=1, keep_dims=True, name="weightedSum")
 
-	caps2OutputRound1 = squashFunction(weightedSum, axis=-2, name="caps2OutputRound1")
+	# caps2OutputRound1 = squashFunction(weightedSum, axis=-2, name="caps2OutputRound1")
 
 	i = tf.constant(0)
+	# rawWeights = tf.get_variable("rawWeights", initializer=tf.zeros([batchSize, totalPrimaryCapsules, options.numLevelTwoCapsules, 1, 1], dtype=np.float32, name="rawWeights"))
+	# tf.get_variable(name="rawWeights", shape=[batchSize, int(totalPrimaryCapsules), options.numLevelTwoCapsules, 1, 1], dtype=tf.float32, initializer=tf.zeros_initializer())
+	with tf.variable_scope("routingWeights"):
+		# rawWeights = tf.get_variable(name="rawWeights", shape=[1, int(totalPrimaryCapsules), options.numLevelTwoCapsules, 1, 1], dtype=tf.float32, initializer=tf.zeros_initializer(), trainable=False)
+		rawWeights = tf.get_variable(name="rawWeights", shape=[1, int(totalPrimaryCapsules), options.numLevelTwoCapsules, 1, 1], dtype=tf.float32, initializer=tf.zeros_initializer(), trainable=True)
+	routingWeights = tf.nn.softmax(rawWeights, dim=2, name="routingWeights")
+	weightedPredictions = tf.multiply(routingWeights, caps2Predicted, name="weightedPredictions")
+	weightedSum = tf.reduce_sum(weightedPredictions, axis=1, keep_dims=True, name="weightedSum")
+	caps2Output = squashFunction(weightedSum, axis=-2, name="caps2Output")
+
 	while_condition = lambda i, caps2OutputRound1: tf.less(i, options.numRoutingIterations)
 
-	def loop_body(i, caps2OutputRound1):
-		# Round 2
-		caps2OutputRound1Tiled = tf.tile(caps2OutputRound1, [1, totalPrimaryCapsules, 1, 1, 1], name="caps2_output_round_1_tiled")
+	def loop_body(i, caps2Output):
+		with tf.variable_scope("routingWeights", reuse=True):
+			# rawWeights = tf.get_variable("rawWeights", trainable=False)
+			rawWeights = tf.get_variable("rawWeights", trainable=True)
 
-		agreement = tf.matmul(caps2Predicted, caps2OutputRound1Tiled, transpose_a=True, name="agreement")
+		routingWeights = tf.nn.softmax(rawWeights, dim=2, name="routingWeights")
+		weightedPredictions = tf.multiply(routingWeights, caps2Output, name="weightedPredictions")
+		weightedSum = tf.reduce_sum(weightedPredictions, axis=1, keep_dims=True, name="weightedSum")
+		caps2Output = squashFunction(weightedSum, axis=-2, name="caps2Output")
+		caps2OutputTiled = tf.tile(caps2Output, [1, totalPrimaryCapsules, 1, 1, 1], name="caps2_output_tiled")
 
-		rawWeightsRound2 = tf.add(rawWeights, agreement, name="rawWeightsRound2")
+		agreement = tf.reduce_mean(tf.matmul(caps2Predicted, caps2OutputTiled, transpose_a=True, name="agreement"), axis=0, keep_dims=True, name="agreementSum")
+		# rawWeights += agreement
+		rawWeightsAssignOp = rawWeights.assign(rawWeights + agreement)
 
-		routingWeightsRound2 = tf.nn.softmax(rawWeightsRound2, dim=2, name="routingWeightsRound2")
-		weightedPredictionsRound2 = tf.multiply(routingWeightsRound2, caps2Predicted, name="weightedPredictionsRound2")
-		weightedSumRound2 = tf.reduce_sum(weightedPredictionsRound2, axis=1, keep_dims=True, name="weightedSumRound2")
-		caps2OutputRound2 = squashFunction(weightedSumRound2, axis=-2, name="caps2OutputRound2")
-		return [tf.add(i, 1), caps2OutputRound2]
+		with tf.control_dependencies([rawWeightsAssignOp]):
+			return [tf.add(i, 1), caps2Output]
 
-	[loopNode, caps2FinalOutput] = tf.while_loop(while_condition, loop_body, [i, caps2OutputRound1])
+	[loopNode, caps2FinalOutput] = tf.while_loop(while_condition, loop_body, [i, caps2Output])
 
 	with tf.control_dependencies([caps2FinalOutput]):
 		print ("Caps2 output shape: %s" % str(caps2FinalOutput.get_shape()))

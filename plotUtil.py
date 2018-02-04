@@ -12,7 +12,7 @@ currentStepTrainAccuracy = []
 validationLoss = []
 validationAccuracy = []
 
-performanceLogFilePath = os.path.join(os.getcwd(), "logs-MNIST-old", "performance-log.txt")
+performanceLogFilePath = os.path.join(os.getcwd(), "logs-no-RBA-MNIST", "performance-log.txt")
 with open(performanceLogFilePath, 'r') as performanceLogFile:
 	for line in performanceLogFile:
 		linePortions = line.split()
@@ -34,7 +34,7 @@ ax.plot(x, currentStepTrainLoss, 'g', label='Train (Current)', linewidth=2.0)
 ax.plot(x, validationLoss, 'b', label='Validation', linewidth=2.0)
 ax.legend()
 
-plt.savefig('./loss_capsnet_mnist.png', dpi=300)
+plt.savefig('./loss_capsnet_mnist_no_rba.png', dpi=300)
 plt.close('all')
 
 fig, ax = plt.subplots()
@@ -46,5 +46,5 @@ ax.plot(x, currentStepTrainAccuracy, 'g', label='Train (Current)', linewidth=2.0
 ax.plot(x, validationAccuracy, 'b', label='Validation', linewidth=2.0)
 ax.legend()
 
-plt.savefig('./accuracy_capsnet_mnist.png', dpi=300)
+plt.savefig('./accuracy_capsnet_mnist_no_rba.png', dpi=300)
 plt.close('all')

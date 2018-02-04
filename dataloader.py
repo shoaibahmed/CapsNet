@@ -30,6 +30,14 @@ def loadDataset(rootDirectory, fileList):
 			else:
 				dict = pickle.load(fo)
 
+		if sys.version_info[0] == 3:
+			dictKeys = list(dict.keys())
+			newDictKeys = [str(key.decode()) for key in dictKeys]
+			for iterator in range(len(newDictKeys)):
+				dict[newDictKeys[iterator]] = dict[dictKeys[iterator]]
+				del dict[dictKeys[iterator]]
+			# print (dict.keys())
+
 		if finalDict["data"] is None:
 			finalDict["data"] = dict["data"]
 			finalDict["labels"] = dict["labels"]
@@ -119,21 +127,25 @@ class Set():
 
 		return [batchImages.reshape(batch_size, -1), batchLabels]
 
-	@property
-	def images(self):
-		return self.images
+	# @property
+	# def images(self):
+	# 	return self.images
 
-	@property
-	def labels(self):
-		return self.labels
+	# @images.setter
+	# def images(self, images):
+	# 	self.images = images
 
-	@property
-	def num_examples(self):
-		return self.num_examples
+	# @property
+	# def labels(self):
+	# 	return self.labels
 
-	@property
-	def epochs_completed(self):
-		return self.epochs_completed
+	# @property
+	# def num_examples(self):
+	# 	return self.num_examples
+
+	# @property
+	# def epochs_completed(self):
+	# 	return self.epochs_completed
 
 class DataLoader():
 	def __init__(self, datasetName, one_hot=False):
